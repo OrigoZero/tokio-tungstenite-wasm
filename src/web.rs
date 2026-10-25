@@ -51,7 +51,14 @@ impl WebSocketStream {
         let (open_sx, open_rx) = futures_channel::oneshot::channel();
         let on_open_callback = {
             let mut open_sx = Some(open_sx);
-            Closure::wrap(Box::new(move |_event| {
+            // `Closure::wrap_assert_unwind_safe` rather than `Closure::wrap`: the engine
+            // builds for wasm with `-C panic=unwind` (scripts/wasm_build_flags.sh), so
+            // wasm-bindgen catches a panic raised inside a callback the browser invoked
+            // instead of letting it trap, and it asks the callback's captures to be
+            // unwind-safe first. Each callback below either resolves a promise or hands
+            // the event on, so a panic crossing one leaves it the way an early return
+            // does.
+            Closure::wrap_assert_unwind_safe(Box::new(move |_event| {
                 open_sx.take().map(|open_sx| open_sx.send(()));
             }) as Box<dyn FnMut(web_sys::Event)>)
         };
@@ -60,7 +67,7 @@ impl WebSocketStream {
         let (err_sx, err_rx) = futures_channel::oneshot::channel();
         let on_error_callback = {
             let mut err_sx = Some(err_sx);
-            Closure::wrap(Box::new(move |_error_event| {
+            Closure::wrap_assert_unwind_safe(Box::new(move |_error_event| {
                 err_sx.take().map(|err_sx| err_sx.send(()));
             }) as Box<dyn FnMut(ErrorEvent)>)
         };
@@ -71,7 +78,7 @@ impl WebSocketStream {
         let on_message_callback = {
             let waker = Rc::clone(&waker);
             let queue = Rc::clone(&queue);
-            Closure::wrap(Box::new(move |event: MessageEvent| {
+            Closure::wrap_assert_unwind_safe(Box::new(move |event: MessageEvent| {
                 let payload = std::convert::TryFrom::try_from(event);
                 queue.borrow_mut().push_back(payload);
                 if let Some(waker) = waker.borrow_mut().take() {
@@ -92,7 +99,7 @@ impl WebSocketStream {
         let on_error_callback = {
             let waker = Rc::clone(&waker);
             let queue = Rc::clone(&queue);
-            Closure::wrap(Box::new(move |_error_event| {
+            Closure::wrap_assert_unwind_safe(Box::new(move |_error_event| {
                 queue
                     .borrow_mut()
                     .push_back(Err(crate::Error::ConnectionClosed));
@@ -106,7 +113,7 @@ impl WebSocketStream {
         let on_close_callback = {
             let waker = Rc::clone(&waker);
             let queue = Rc::clone(&queue);
-            Closure::wrap(Box::new(move |event: CloseEvent| {
+            Closure::wrap_assert_unwind_safe(Box::new(move |event: CloseEvent| {
                 queue.borrow_mut().push_back(Ok(crate::Message::Close(Some(
                     crate::message::CloseFrame {
                         code: event.code().into(),
